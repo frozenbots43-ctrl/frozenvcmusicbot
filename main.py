@@ -917,11 +917,43 @@ async def fallback_local_playback(chat_id: int, message: Message, song_info: dic
                 f"Starting local playback for ⚡ {song_info['title']}..."
             )
 
-        # Download & play locally
+        # Download & play locally (support video files)
         media_path = await vector_transport_resolver(video_url)
+
+        # Detect whether the resolved file is a video
+        import mimetypes
+        is_video = False
+        mtype, _ = mimetypes.guess_type(media_path)
+        if mtype and mtype.startswith("video"):
+            is_video = True
+        else:
+            # fallback to extension check
+            if any(media_path.lower().endswith(ext) for ext in (".mp4", ".mkv", ".webm", ".mov", ".avi", ".flv", ".m4v")):
+                is_video = True
+
+        # Try to create an appropriate stream object for video; fall back gracefully to audio-style MediaStream
+        try:
+            if is_video:
+                # prefer VideoPiped if available (pytgcalls)
+                try:
+                    from pytgcalls.types import VideoPiped  # type: ignore
+                    stream_obj = VideoPiped(media_path)
+                except Exception:
+                    # fallback: some setups accept a MediaStream with a video flag
+                    try:
+                        stream_obj = MediaStream(media_path, video=True)  # type: ignore
+                    except Exception:
+                        # last resort: pass the path in the existing MediaStream wrapper
+                        stream_obj = MediaStream(media_path)
+            else:
+                stream_obj = MediaStream(media_path)
+        except Exception:
+            # If anything unexpected happens building the stream, fall back to a plain MediaStream
+            stream_obj = MediaStream(media_path)
+
         await call_py.play(
             chat_id,
-            MediaStream(media_path)
+            stream_obj
         )
         playback_tasks[chat_id] = asyncio.current_task()
 
@@ -990,7 +1022,6 @@ async def fallback_local_playback(chat_id: int, message: Message, song_info: dic
 
         if chat_id in chat_containers and chat_containers[chat_id]:
             chat_containers[chat_id].pop(0)
-
 
 
 
